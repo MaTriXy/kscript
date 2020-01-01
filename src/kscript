@@ -3,7 +3,9 @@
 
 
 absolute_path() {
-    [[ $1 = /* ]] && echo "$1" || echo "$PWD/${1#./}"
+    # if the given path to the kscript launcher is absolute (i.e. it is either starting with / or a
+    # 'letter:/' when using gitbash on windows) it is returned unchanged, otherwise we construct an absolute path
+    [[ $1 = /* ]] || [[ $1 =~ ^[A-z]:/ ]] && echo "$1" || echo "$PWD/${1#./}"
 }
 
 resolve_symlink() (
@@ -24,5 +26,11 @@ abs_kscript_path=$(resolve_symlink $(absolute_path $0))
 jarPath=$(dirname $abs_kscript_path)/kscript.jar
 if [[ $(uname) == CYGWIN* ]]; then jarPath=$(cygpath -w ${jarPath}); fi
 
+## prefer KOTLIN_HOME instead of PATH to resolve `kotlin` location (see #145)
+if [[ -z "$KOTLIN_HOME" ]]; then KOTLIN_EXEC="kotlin"; else KOTLIN_EXEC="$KOTLIN_HOME/bin/kotlin"; fi
+
+## expose the name of the script being run to the script itself
+export KSCRIPT_FILE="$1"
+
 ## run it using command substitution to have just the user process once kscript is done
-eval "exec $(kotlin -classpath ${jarPath} kscript.app.KscriptKt "$@")"
+eval "exec $(${KOTLIN_EXEC} -classpath ${jarPath} kscript.app.KscriptKt "$@")"

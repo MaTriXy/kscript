@@ -1,6 +1,12 @@
 package kscript.app
 
-import kscript.app.ShellUtils.requireInPath
+import com.jcabi.aether.Aether
+import org.sonatype.aether.RepositoryException
+import org.sonatype.aether.artifact.Artifact
+import org.sonatype.aether.repository.Authentication
+import org.sonatype.aether.repository.RemoteRepository
+import org.sonatype.aether.util.artifact.DefaultArtifact
+import org.sonatype.aether.util.artifact.JavaScopes.RUNTIME
 import java.io.File
 
 
@@ -21,145 +27,111 @@ fun resolveDependencies(depIds: List<String>, customRepos: List<MavenRepo> = emp
 
     // Use cached classpath from previous run if present
     if (DEP_LOOKUP_CACHE_FILE.isFile()) {
-        val cache = DEP_LOOKUP_CACHE_FILE.
-                readLines().filter { it.isNotBlank() }.
-                associateBy({ it.split(" ")[0] }, { it.split(" ")[1] })
+        val cache = DEP_LOOKUP_CACHE_FILE
+            .readLines()
+            .filter { it.isNotBlank() }
+            .associateBy({ it.split(" ")[0] }, { it.split(" ")[1] })
 
         if (cache.containsKey(depsHash)) {
-            return cache.get(depsHash)
-        }
-    }
+            val cachedCP = cache.get(depsHash)!!
 
 
-    if (loggingEnabled) System.err.print("[kscript] Resolving dependencies...")
-    var hasLoggedDownload = false
-
-    val depTags = depIds.map {
-        val splitDepId = it.split(":")
-
-        if (!listOf(3, 4).contains(splitDepId.size)) {
-            System.err.println("[ERROR] Invalid dependency locator: '${it}'.  Expected format is groupId:artifactId:version[:classifier]")
-            quit(1)
-        }
-
-        """
-    <dependency>
-            <groupId>${splitDepId[0]}</groupId>
-            <artifactId>${splitDepId[1]}</artifactId>
-            <version>${splitDepId[2]}</version>
-            ${if (splitDepId.size == 4) "<classifier>" + splitDepId[2] + "<classifier>" else ""}
-    </dependency>
-    """
-    }
-
-    // see https://github.com/holgerbrandl/kscript/issues/22
-    val repoTags = customRepos.map {
-        """
-    <repository>
-            <id>${it.id}</id>
-            <url>${it.url}</url>
-    </repository>
-    """
-
-    }
-
-    val pom = """
-<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-
-    <modelVersion>4.0.0</modelVersion>
-
-    <groupId>kscript</groupId>
-    <artifactId>maven_template</artifactId>
-    <version>1.0</version>
-
-     <repositories>
-        <repository>
-            <id>jcenter</id>
-            <url>http://jcenter.bintray.com/</url>
-        </repository>
-        ${repoTags.joinToString("\n")}
-    </repositories>
-
-    <dependencies>
-    ${depTags.joinToString("\n")}
-    </dependencies>
-</project>
-"""
-
-
-    fun runMaven(pom: String, goal: String): Iterable<String> {
-        val temp = File.createTempFile("__resdeps__temp__", "_pom.xml")
-        temp.writeText(pom)
-
-        requireInPath("mvn")
-
-        val mavenCmd = if (System.getenv("PATH").run { this != null && contains("cygwin") }) {
-            // when running with cygwin we need to map the pom path into windows space to work
-            "mvn -f $(cygpath -w '${temp.absolutePath}') ${goal}"
-        } else {
-            "mvn -f ${temp.absolutePath} ${goal}"
-        }
-
-        return evalBash(mavenCmd, stdoutConsumer = object : StringBuilderConsumer() {
-            override fun accept(t: String) {
-                super.accept(t)
-
-
-                // log artifact downloading (see https://github.com/holgerbrandl/kscript/issues/23)
-                if (loggingEnabled && t.startsWith("Downloading: ")) {
-                    if (!hasLoggedDownload) System.err.println()
-                    hasLoggedDownload = true
-
-                    System.err.println("[kscript] " + t)
-                }
+            // Make sure that local dependencies have not been wiped since resolving them (like by deleting .m2) (see #146)
+            if (cachedCP.split(CP_SEPARATOR_CHAR).all { File(it).exists() }) {
+                return cachedCP
+            } else {
+                System.err.println("[kscript] Detected missing dependencies in cache.")
             }
-        }).stdout.lines()
+        }
     }
 
-    val mavenResult = runMaven(pom, "dependency:build-classpath")
 
+    if (loggingEnabled) infoMsg("Resolving dependencies...")
 
-    // The following artifacts could not be resolved: log4ja:log4ja:jar:9.8.87, log4j:log4j:jar:9.8.105: Could not
+    try {
+        val artifacts = resolveDependenciesViaAether(depIds, customRepos, loggingEnabled)
+        val classPath = artifacts.map { it.file.absolutePath }.joinToString(CP_SEPARATOR_CHAR)
 
-    // Check for errors (e.g. when using non-existing deps resdeps.kts log4j:log4j:1.2.14 org.org.docopt:org.docopt:22.3-MISSING)
-    mavenResult.filter { it.startsWith("[ERROR]") }.find { it.contains("Could not resolve dependencie") }?.let {
-        System.err.println("Failed to lookup dependencies. Maven reported the following error:")
-        System.err.println(it)
+        if (loggingEnabled) infoMsg("Dependencies resolved")
 
+        // Add classpath to cache
+        DEP_LOOKUP_CACHE_FILE.appendText(depsHash + " " + classPath + "\n")
+
+        // Print the classpath
+        return classPath
+    } catch (e: RepositoryException) {
+        // Probably a wrapped Nullpointer from 'DefaultRepositorySystem.resolveDependencies()', this however is probably a connection problem.
+        errorMsg("Failed while connecting to the server. Check the connection (http/https, port, proxy, credentials, etc.) of your maven dependency locators. If you suspect this is a bug, you can create an issue on https://github.com/holgerbrandl/kscript")
+        errorMsg("Exception: $e")
         quit(1)
     }
-
-
-    // Extract the classpath from the maven output
-    val classPath = mavenResult.dropWhile { !it.contains("Dependencies classpath:") }.drop(1).firstOrNull()
-
-    if (classPath == null) {
-        errorMsg("Failed to lookup dependencies. Check dependency locators or file a bug on https://github.com/holgerbrandl/kscript")
-        System.err.println("[kscript] The error reported by maven was:")
-        mavenResult.map { it.prependIndent("[kscript] [mvn] ") }.forEach { System.err.println(it) }
-
-        System.err.println("[kscript] Generated pom file was:")
-        pom.lines()
-            //            .map{it.prependIndent("[kscript] [pom] ")}
-            .forEach { System.err.println(it) }
-        quit(1)
-    }
-
-
-    // Add classpath to cache
-    if (loggingEnabled && !hasLoggedDownload) {
-        System.err.println("Done")
-    }
-
-    DEP_LOOKUP_CACHE_FILE.appendText(depsHash + " " + classPath + "\n")
-
-    // Print the classpath
-    return classPath
 }
 
+fun decodeEnv(value: String): String {
+    return if (value.startsWith("{{") && value.endsWith("}}")) {
+        val envKey = value.substring(2, value.length - 2)
+        val envValue = System.getenv()[envKey]
+        if (null == envValue) {
+            errorMsg("Could not resolve environment variable {{$envKey}} in maven repository credentials")
+            quit(1)
+        }
+        envValue
+    } else {
+        value
+    }
+}
+
+fun resolveDependenciesViaAether(depIds: List<String>, customRepos: List<MavenRepo>, loggingEnabled: Boolean): List<Artifact> {
+    val jcenter = RemoteRepository("jcenter", "default", "http://jcenter.bintray.com/")
+    val customRemoteRepos = customRepos.map { mavenRepo ->
+        RemoteRepository(mavenRepo.id, "default", mavenRepo.url).apply {
+            if (!mavenRepo.user.isNullOrEmpty() && !mavenRepo.password.isNullOrEmpty()) {
+                authentication = Authentication(decodeEnv(mavenRepo.user), decodeEnv(mavenRepo.password))
+            }
+        }
+    }
+    val remoteRepos = customRemoteRepos + jcenter
+
+    val aether = Aether(remoteRepos, File(System.getProperty("user.home") + "/.m2/repository"))
+    return depIds.flatMap {
+        if (loggingEnabled) System.err.print("[kscript]     Resolving $it...")
+
+        val artifacts = aether.resolve(depIdToArtifact(it), RUNTIME)
+
+        if (loggingEnabled) System.err.println("Done")
+
+        artifacts
+    }
+}
+
+fun depIdToArtifact(depId: String): Artifact {
+    val regex = Regex("^([^:]*):([^:]*):([^:@]*)(:(.*))?(@(.*))?\$")
+    val matchResult = regex.find(depId)
+
+    if (matchResult == null) {
+        System.err.println("[ERROR] Invalid dependency locator: '${depId}'.  Expected format is groupId:artifactId:version[:classifier][@type]")
+        quit(1)
+    }
+
+    val groupId = matchResult.groupValues[1]
+    val artifactId = matchResult.groupValues[2]
+    val version = formatVersion(matchResult.groupValues[3])
+    val classifier = matchResult.groups[5]?.value
+    val type = matchResult.groups[7]?.value ?: "jar"
+
+    return DefaultArtifact(groupId, artifactId, classifier, type, version)
+}
+
+fun formatVersion(version: String): String {
+    // replace + with open version range for maven
+    return version.let { it ->
+        if (it.endsWith("+")) {
+            "[${it.dropLast(1)},)"
+        } else {
+            it
+        }
+    }
+}
 
 // called by unit tests
 object DependencyUtil {

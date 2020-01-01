@@ -77,7 +77,11 @@ assert "kscript i_do_not_exist.kts 2>&1" "[kscript] [ERROR] Could not read scrip
 
 ## make sure that it runs with remote URLs
 assert "kscript https://raw.githubusercontent.com/holgerbrandl/kscript/master/test/resources/url_test.kts" "I came from the internet"
+assert "kscript https://git.io/fxHBv" "main was called"
 
+## there are some dependencies which are not jar, but maybe pom, aar, ..
+## make sure they work, too
+assert "kscript ${KSCRIPT_HOME}/test/resources/depends_on_with_type.kts" "getBigDecimal(1L): 1"
 
 # repeated compilation of buggy same script should end up in error again
 assert_raises "kscript '1-'; kscript '1-'" 1
@@ -111,6 +115,10 @@ assert "unset KOTLIN_HOME; echo 'println(99)' | kscript -" "99"
 
 ## todo test what happens if kotlin/kotlinc/java/maven is not in PATH
 
+## run script that tries to find out its own filename via environment variable
+f="${KSCRIPT_HOME}/test/resources/uses_self_file_name.kts"
+assert "$f" "Usage: $f [-ae] [--foo] file+"
+
 
 assert_end environment_tests
 
@@ -130,7 +138,7 @@ assert "resolve_deps log4j:log4j:9.8.76" "false"
 ## wrong format should exit with 1
 assert "resolve_deps log4j:1.0" "false"
 
-assert_stderr "resolve_deps log4j:1.0" "[ERROR] Invalid dependency locator: 'log4j:1.0'.  Expected format is groupId:artifactId:version[:classifier]"
+assert_stderr "resolve_deps log4j:1.0" "[ERROR] Invalid dependency locator: 'log4j:1.0'.  Expected format is groupId:artifactId:version[:classifier][@type]"
 
 ## other version of wrong format should die with useful error.
 assert_raises "resolve_deps log4j:::1.0" 1
@@ -148,6 +156,9 @@ assert "kscript ${KSCRIPT_HOME}/test/resources/depends_on_annot.kts" "kscript wi
 
 # make sure that @file:DependsOnMaven is parsed correctly
 assert "kscript ${KSCRIPT_HOME}/test/resources/depends_on_maven_annot.kts" "kscript with annotations rocks!"
+
+# make sure that dynamic versions are matched properly
+assert "kscript ${KSCRIPT_HOME}/test/resources/depends_on_dynamic.kts" "dynamic kscript rocks!"
 
 # make sure that @file:MavenRepository is parsed correctly
 assert "kscript ${KSCRIPT_HOME}/test/resources/custom_mvn_repo_annot.kts" "kscript with annotations rocks!"
@@ -239,15 +250,28 @@ assert 'kscript "println(args.size)" "--params foo"' 1  ## make sure dash args a
 assert 'kscript "println(args.size)" "foo bar"' 1       ## allow for spaces
 assert 'kscript "println(args[0])" "foo bar"' "foo bar" ## make sure quotes are not propagated into args
 
+## prevent regression of #181
+assert 'echo "println(123)" > 123foo.kts; kscript 123foo.kts' "123"
+
+
+## prevent regression of #185
+assert "source ${KSCRIPT_HOME}/test/resources/home_dir_include.sh" "42"
+
+## prevent regression of #173
+assert "source ${KSCRIPT_HOME}/test/resources/compiler_opts_with_includes.sh" "hello42"
+
 
 kscript_nocall() { kotlin -classpath ${KSCRIPT_HOME}/build/libs/kscript.jar kscript.app.KscriptKt "$@";}
 export -f kscript_nocall
 
 ## temp projects with include symlinks
-assert_raises 'tmpDir=$(kscript_nocall --idea test/resources/includes/include_variations.kts | cut -f2 -d" "); cd $tmpDir && gradle build' 0
+assert_raises 'tmpDir=$(kscript_nocall --idea test/resources/includes/include_variations.kts | cut -f2 -d" " | xargs echo); cd $tmpDir && gradle build' 0
+
+## Ensure relative includes with in shebang mode
+assert_raises "${KSCRIPT_HOME}/test/resources/includes/shebang_mode_includes" 0
 
 ## support diamond-shaped include schemes (see #133)
-assert_raises 'tmpDir=$(kscript_nocall --idea test/resources/includes/diamond.kts | cut -f2 -d" "); cd $tmpDir && gradle build' 0
+assert_raises 'tmpDir=$(kscript_nocall --idea test/resources/includes/diamond.kts | cut -f2 -d" " | xargs echo); cd $tmpDir && gradle build' 0
 
 ## todo reenable interactive mode tests using kscript_nocall
 
@@ -261,3 +285,30 @@ assert_end misc
 assert_raises "./gradlew test"
 
 assert_end junit_tests
+
+
+########################################################################################################################
+##  bootstrap header
+
+f=/tmp/echo_stdin_args.kts
+cp ${KSCRIPT_HOME}/test/resources/echo_stdin_args.kts $f
+
+# ensure script works as is
+assert 'echo stdin | '$f' --foo bar' "stdin | script --foo bar"
+
+# add bootstrap header
+assert 'kscript --add-bootstrap-header '$f ''
+
+# ensure adding it again raises an error
+assert_raises 'kscript --add-bootstrap-header '$f 1
+
+# ensure scripts works with header, including stdin
+assert 'echo stdin | '$f' --foo bar' "stdin | script --foo bar"
+
+# ensure scripts works with header invoked with explicit `kscript`
+assert 'echo stdin | kscript '$f' --foo bar' "stdin | script --foo bar"
+
+
+rm $f
+
+assert_end bootstrap_header

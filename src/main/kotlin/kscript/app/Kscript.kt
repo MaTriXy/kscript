@@ -2,6 +2,7 @@ package kscript.app
 
 import kscript.app.ShellUtils.requireInPath
 import org.docopt.DocOptWrapper
+import org.intellij.lang.annotations.Language
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
@@ -20,7 +21,7 @@ import kotlin.system.exitProcess
  * @author Holger Brandl
  */
 
-const val KSCRIPT_VERSION = "2.4.5"
+const val KSCRIPT_VERSION = "2.9.0"
 
 val selfName = System.getenv("CUSTOM_KSCRIPT_NAME") ?: "kscript"
 
@@ -30,12 +31,10 @@ $selfName - Enhanced scripting support for Kotlin on *nix-based systems.
 Usage:
  $selfName [options] <script> [<script_args>]...
  $selfName --clear-cache
- $selfName --self-update
 
 The <script> can be a  script file (*kts), a script URL, - for stdin, a *.kt source file with a main method, or some kotlin code.
 
 Use '--clear-cache' to wipe cached script jars and urls
-Use '--self-update' to update kscript to the latest version
 
 Options:
  -i --interactive        Create interactive shell with dependencies as declared in script
@@ -43,18 +42,34 @@ Options:
  --idea                  Open script in temporary Intellij session
  -s --silent             Suppress status logging to stderr
  --package               Package script and dependencies into self-dependent binary
+ --add-bootstrap-header  Prepend bash header that installs kscript if necessary
 
 
-Copyright : 2017 Holger Brandl
+Copyright : 2019 Holger Brandl
 License   : MIT
 Version   : v$KSCRIPT_VERSION
 Website   : https://github.com/holgerbrandl/kscript
 """.trim()
 
-val KSCRIPT_CACHE_DIR = File(System.getenv("HOME")!!, ".kscript")
+// see https://stackoverflow.com/questions/585534/what-is-the-best-way-to-find-the-users-home-directory-in-java
+// See #146 "allow kscript cache dir to be configurable" for details
+val KSCRIPT_CACHE_DIR = System.getenv("KSCRIPT_CACHE_DIR")?.let { File(it) }
+    ?: File(System.getProperty("user.home")!!, ".kscript")
 
 // use lazy here prevent empty dirs for regular scripts https://github.com/holgerbrandl/kscript/issues/130
 val SCRIPT_TEMP_DIR by lazy { createTempDir() }
+
+@Language("sh")
+private val BOOTSTRAP_HEADER = """
+    #!/bin/bash
+
+    //usr/bin/env echo '
+    /**** BOOTSTRAP kscript ****\'>/dev/null
+    command -v kscript >/dev/null 2>&1 || curl -L "https://git.io/fpF1K" | bash 1>&2
+    exec kscript $0 "$@"
+    \*** IMPORTANT: Any code including imports and annotations must come after this line ***/
+
+    """.trimIndent().lines()
 
 
 fun main(args: Array<String>) {
@@ -86,41 +101,39 @@ fun main(args: Array<String>) {
         quit(0)
     }
 
-    // optionally self-update kscript ot the newest version
-    // (if not local copy is not being maintained by sdkman)
-    if (docopt.getBoolean(("self-update"))) {
-        if (true || evalBash("which kscript | grep .sdkman").stdout.isNotBlank()) {
-            info("Installing latest version of kscript...")
-            //            println("sdkman_auto_answer=true && sdk install kscript")
-
-            // create update script
-            val updateScript = File(KSCRIPT_CACHE_DIR, "self_update.sh").apply {
-                writeText("""
-                #!/usr/bin/env bash
-                export SDKMAN_DIR="${"$"}{HOME}/.sdkman"
-                source "${"$"}{SDKMAN_DIR}/bin/sdkman-init.sh"
-                sdkman_auto_answer=true && sdk install kscript
-                """.trimIndent())
-                setExecutable(true)
-            }
-
-            println(updateScript.absolutePath)
-        } else {
-            info("Self-update is currently just supported via sdkman.")
-            info("Please download a new release from https://github.com/holgerbrandl/kscript")
-            // todo port sdkman-indpendent self-update
-        }
-
-        quit(0)
-    }
-
-
     // Resolve the script resource argument into an actual file
     val scriptResource = docopt.getString("script")
 
     val enableSupportApi = docopt.getBoolean("text")
     val (rawScript, includeContext) = prepareScript(scriptResource)
 
+    if (docopt.getBoolean("add-bootstrap-header")) {
+        errorIf(!rawScript.canWrite()) {
+            "Script file not writable: $rawScript"
+        }
+        errorIf(rawScript.parentFile == SCRIPT_TEMP_DIR) {
+            "Temporary script file detected: $rawScript, created from $scriptResource"
+        }
+        val scriptLines = rawScript.readLines().dropWhile {
+            it.startsWith("#!/") && it != "#!/bin/bash"
+        }
+
+        errorIf(scriptLines.getOrNull(0) == BOOTSTRAP_HEADER[0]
+                && scriptLines.any { "command -v kscript >/dev/null 2>&1 || " in it }) {
+            val lastHeaderLine = BOOTSTRAP_HEADER.findLast { it.isNotBlank() }!!
+            val preexistingHeader =
+                    scriptLines.dropLastWhile { it != lastHeaderLine }.joinToString("\n")
+            "Bootstrap header already detected:\n\n$preexistingHeader\n\n" +
+                    "You can remove it to force the re-generation"
+        }
+
+        rawScript.writeText((BOOTSTRAP_HEADER + scriptLines).joinToString("\n"))
+
+        if (loggingEnabled) {
+            info("$rawScript updated")
+        }
+        quit(0)
+    }
 
     // post process script (text-processing mode, custom dsl preamble, resolve includes)
     // and finally resolve all includes (see https://github.com/holgerbrandl/kscript/issues/34)
@@ -137,7 +150,7 @@ fun main(args: Array<String>) {
 
     //  Create temporary dev environment
     if (docopt.getBoolean("idea")) {
-        println(launchIdeaWithKscriptlet(rawScript, dependencies, customRepos, includeURLs))
+        println(launchIdeaWithKscriptlet(rawScript, userArgs, dependencies, customRepos, includeURLs))
         exitProcess(0)
     }
 
@@ -180,9 +193,12 @@ fun main(args: Array<String>) {
     }
 
     // Capitalize first letter and get rid of dashes (since this is what kotlin compiler is doing for the wrapper to create a valid java class name)
+    // For valid characters see https://stackoverflow.com/questions/4814040/allowed-characters-in-filename
     val className = scriptFile.nameWithoutExtension
-        .replace("[.-]".toRegex(), "_")
+        .replace("[^A-Za-z0-9]".toRegex(), "_")
         .capitalize()
+        // also make sure that it is a valid identifier by avoiding an initial digit (to stay in sync with what the kotlin script compiler will do as well)
+        .let { if ("^[0-9]".toRegex().containsMatchIn(it)) "_" + it else it }
 
 
     // Define the entrypoint for the scriptlet jar
@@ -268,7 +284,7 @@ fun main(args: Array<String>) {
     if (classpath.isNotEmpty())
         extClassPath += kscript.app.CP_SEPARATOR_CHAR + classpath
 
-    println("kotlin ${kotlinOpts} -classpath ${extClassPath} ${execClassName} ${joinedUserArgs} ")
+    println("kotlin ${kotlinOpts} -classpath \"${extClassPath}\" ${execClassName} ${joinedUserArgs} ")
 }
 
 
@@ -291,7 +307,7 @@ private fun versionCheck() {
     fun padVersion(version: String) = java.lang.String.format("%03d%03d%03d", *version.split(".").map { Integer.valueOf(it) }.toTypedArray())
 
     if (padVersion(latestVersion) > padVersion(KSCRIPT_VERSION)) {
-        info("""A new version (v${latestVersion}) of kscript is available. Use 'kscript --self-update' to update your local kscript installation""")
+        info("""A new version (v${latestVersion}) of kscript is available.""")
     }
 }
 
@@ -317,6 +333,7 @@ fun prepareScript(scriptResource: String): Pair<File, URI> {
             // if we can "just" read from script resource create tmp file
             // i.e. script input is process substitution file handle
             // not FileInputStream(this).bufferedReader().use{ readText()} does not work nor does this.readText
+            includeContext = this.absoluteFile.parentFile.toURI()
             createTmpScript(FileInputStream(this).bufferedReader().readText())
         }
     }

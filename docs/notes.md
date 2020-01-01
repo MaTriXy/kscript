@@ -22,6 +22,26 @@ export JAVA_HOME=`/usr/libexec/java_home -v 9.0.1`
 export JAVA_HOME=`/usr/libexec/java_home -v 1.8.0_151`
 ```
 
+
+## Change java version ubuntu
+
+default version https://tecadmin.net/install-openjdk-java-ubuntu/
+
+installation https://askubuntu.com/questions/121654/how-to-set-default-java-version
+
+
+## Java11 Support
+
+security module required
+* https://issues.apache.org/jira/secure/attachment/12708191/ZOOKEEPER-2056.patch
+* list modules https://www.oracle.com/corporate/features/understanding-java-9-modules.html --> `java --list-modules` --> 
+```
+java --list-modules | grep jg
+java.security.jgss@11.0.4
+jdk.security.jgss@11.0.4
+
+```
+
 ## launcher
 
 https://stackoverflow.com/questions/59895/getting-the-source-directory-of-a-bash-script-from-within
@@ -51,8 +71,6 @@ kotlin [jupyter kernel ](https://github.com/ligee/kotlin-jupyter/blob/6ec1e5f8e4
 
 which seem to come from https://github.com/kohesive/keplin//keplin-maven-resolver/src/main/kotlin/uy/kohesive/keplin/kotlin/script/resolver/maven/MavenResolverAnnotations.kt
 
-
-They also have impl a programmatic mvn resolver there https://github.com/kohesive/keplin/blob/master/keplin-maven-resolver/src/main/kotlin/uy/kohesive/keplin/kotlin/script/resolver/maven/MavenScriptDependenciesResolver.kt
 
 Could be used as a library, see
 https://github.com/kohesive/keplin#keplin-core

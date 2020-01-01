@@ -4,7 +4,8 @@
 # 2. Make sure that support api version is up to date and available from jcenter
 # 3. Push and wait for travis CI results
 
-export KSCRIPT_HOME="/Users/brandl/projects/kotlin/kscript";
+#export KSCRIPT_HOME="/Users/brandl/projects/kotlin/kscript";
+export KSCRIPT_HOME="/mnt/hgfs/sharedDB/db_projects/kscript";
 export PATH=${KSCRIPT_HOME}:${PATH}
 export PATH=~/go/bin/:$PATH
 
@@ -33,7 +34,14 @@ cp ${KSCRIPT_HOME}/build/libs/kscript.jar ${KSCRIPT_ARCHIVE}/kscript-${kscript_v
 
 cd ${KSCRIPT_ARCHIVE}
 rm -f ${KSCRIPT_ARCHIVE}/kscript-${kscript_version}.zip
+
+# on linux
 zip -r ${KSCRIPT_ARCHIVE}/kscript-${kscript_version}.zip kscript-${kscript_version}
+# on windows
+#docker run -it --rm -e kscript_version="${kscript_version}" -v  c:/Users/brandl/archive/kscript_versions:/data alpine
+#apk add zip && cd /data &&  zip -r kscript-${kscript_version}.zip kscript-${kscript_version}
+
+
 open ${KSCRIPT_ARCHIVE}
 
 
@@ -63,6 +71,9 @@ export GITHUB_TOKEN=${GH_TOKEN}
 
 # make your tag and upload
 cd ${KSCRIPT_HOME}
+
+git config  user.email "holgerbrandl@users.noreply.github.com"
+
 
 #git tag v${kscript_version} && git push --tags
 (git diff --exit-code && git tag v${kscript_version})  || echo "could not tag current branch"
@@ -98,8 +109,11 @@ github-release upload \
 
 cd $KSCRIPT_HOME && rm -rf kscript_releases_*
 
-git clone git@github.com:holgerbrandl/kscript.git kscript_releases_${kscript_version}
+git clone https://github.com/holgerbrandl/kscript kscript_releases_${kscript_version}
 cd kscript_releases_${kscript_version}
+
+git config  user.email "holgerbrandl@users.noreply.github.com"
+
 #git checkout --orphan releases
 #git reset --hard
 #git rm --cached -r .
@@ -118,6 +132,8 @@ git commit -m "v${kscript_version} release"
 
 git push origin releases
 
+## test the updated version pointer
+curl https://raw.githubusercontent.com/holgerbrandl/kscript/releases/kscript
 
 ########################################################################
 ### release on sdkman
@@ -175,6 +191,8 @@ cd $KSCRIPT_HOME && rm -rf homebrew-tap
 git clone https://github.com/holgerbrandl/homebrew-tap.git
 cd homebrew-tap
 
+git config  user.email "holgerbrandl@users.noreply.github.com"
+
 archiveMd5=$(shasum -a 256 ${KSCRIPT_ARCHIVE}/kscript-${kscript_version}.zip | cut -f1 -d ' ')
 
 cat - <<EOF > kscript.rb
@@ -200,3 +218,64 @@ git push #origin releases
 
 
 ## to test use `brew install holgerbrandl/tap/kscript`
+
+
+
+########################################################################
+### Update the archlinux package (see https://aur.archlinux.org/packages/kscript/ and https://github.com/holgerbrandl/kscript/pull/216/)
+
+cd $KSCRIPT_HOME && rm -rf archlinux
+
+# See https://wiki.archlinux.org/index.php/AUR_submission_guidelines#Authentication for credentials setup
+git clone ssh://aur@aur.archlinux.org/kscript.git archlinux
+
+cd archlinux
+
+
+#update the PKGBUILD file/pkgver variable
+cat - <<EOF > PKGBUILD
+# Maintainer: Holger Brandl https://github.com/holgerbrandl/kscript/
+
+pkgname=kscript
+pkgver=${kscript_version}
+pkgrel=1
+pkgdesc='Enhanced scripting support for Kotlin on *nix-based systems'
+arch=('any')
+url='https://github.com/holgerbrandl/kscript'
+license=('MIT')
+depends=('kotlin')
+source=("\${pkgname}-\${pkgver}-bin.zip::https://github.com/holgerbrandl/\${pkgname}/releases/download/v\${pkgver}/\${pkgname}-\${pkgver}-bin.zip")
+sha256sums=('${archiveMd5}')
+
+package() {
+    cd "\${srcdir}/\${pkgname}-\${pkgver}/bin"
+
+    install -Dm 755 kscript "\${pkgdir}/usr/bin/kscript"
+    install -Dm 644 kscript.jar "\${pkgdir}/usr/bin/kscript.jar"
+}
+
+EOF
+
+#update the PKGBUILD file/pkgver variable
+cat - <<EOF > .SRCINFO
+pkgbase = kscript
+pkgdesc = Enhanced scripting support for Kotlin on *nix-based systems
+pkgver = ${kscript_version}
+pkgrel = 1
+url = https://github.com/holgerbrandl/kscript
+arch = any
+license = MIT
+depends = kotlin
+source = kscript-${kscript_version}.bin.zip::https://github.com/holgerbrandl/kscript/releases/download/v${kscript_version}/kscript-${kscript_version}-bin.zip
+sha256sums = ${archiveMd5}
+
+pkgname = kscript
+
+EOF
+
+#https://wiki.manjaro.org/index.php?title=Makepkg
+#updpkgsums
+#makepkg --printsrcinfo > .SRCINFO
+git add PKGBUILD .SRCINFO
+git commit -m "updated to ${kscript_version}"
+git push

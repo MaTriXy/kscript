@@ -11,7 +11,7 @@ import java.net.URL
  */
 
 const val PACKAGE_STATEMENT_PREFIX = "package "
-const val IMPORT_STATMENT_PREFIX = "import " // todo make more solid by using operator including regex
+const val IMPORT_STATEMENT_PREFIX = "import " // todo make more solid by using operator including regex
 
 data class IncludeResult(val scriptFile: File, val includes: List<URL> = emptyList())
 
@@ -28,27 +28,34 @@ fun resolveIncludes(template: File, includeContext: URI = template.parentFile.to
 
     // resolve as long as it takes. YAGNI but we do because we can!
     while (script.any { isIncludeDirective(it) }) {
-        script = script.flatMap {
-            if (isIncludeDirective(it)) {
-                val include = extractIncludeTarget(it)
+        script = script.flatMap { line ->
+            if (isIncludeDirective(line)) {
+                val include = extractIncludeTarget(line)
 
                 val includeURL = when {
                     isUrl(include) -> URL(include)
                     include.startsWith("/") -> File(include).toURI().toURL()
+                    include.startsWith("~/") -> File(System.getenv("HOME")!! + include.substring(1)).toURI().toURL()
                     else -> includeContext.resolve(URI(include.removePrefix("./"))).toURL()
                 }
 
-                includes.add(includeURL)
+                // test if include was processed already (aka include duplication, see #151)
+                if (includes.map { it.path }.contains(includeURL.path)) {
+                    // include was already resolved, so we return an emtpy result here to avoid duplication errors
+                    emptyList()
+                } else {
+                    includes.add(includeURL)
 
-                try {
-                    includeURL.readText().lines()
-                } catch (e: FileNotFoundException) {
-                    errorMsg("Failed to resolve //INCLUDE '${include}'")
-                    System.err.println(e.message?.lines()!!.map { it.prependIndent("[kscript] [ERROR] ") })
-                    quit(1)
+                    try {
+                        includeURL.readText().lines()
+                    } catch (e: FileNotFoundException) {
+                        errorMsg("Failed to resolve //INCLUDE '${include}'")
+                        System.err.println(e.message?.lines()!!.map { it.prependIndent("[kscript] [ERROR] ") })
+                        quit(1)
+                    }
                 }
             } else {
-                listOf(it)
+                listOf(line)
             }
         }.let { script.copy(it) }
     }

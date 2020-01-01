@@ -138,11 +138,20 @@ fun createTmpScript(scriptText: String, extension: String = "kts"): File {
 
 fun fetchFromURL(scriptURL: String): File {
     val urlHash = md5(scriptURL)
-    val urlExtension = if (scriptURL.endsWith(".kt")) "kt" else "kts"
+    val scriptText = URL(scriptURL).readText()
+    val urlExtension = when {
+        scriptURL.endsWith(".kt") -> "kt"
+        scriptURL.endsWith(".kts") -> "kts"
+        else -> if (scriptText.contains("fun main")) {
+            "kt"
+        } else {
+            "kts"
+        }
+    }
     val urlCache = File(KSCRIPT_CACHE_DIR, "/url_cache_${urlHash}.$urlExtension")
 
     if (!urlCache.isFile) {
-        urlCache.writeText(URL(scriptURL).readText())
+        urlCache.writeText(scriptText)
     }
 
     return urlCache
@@ -191,7 +200,7 @@ private fun bytesToHex(buffer: ByteArray): String {
 fun numLines(str: String) = str.split("\r\n|\r|\n".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray().size
 
 
-fun launchIdeaWithKscriptlet(scriptFile: File, dependencies: List<String>, customRepos: List<MavenRepo>, includeURLs: List<URL>): String {
+fun launchIdeaWithKscriptlet(scriptFile: File, userArgs: List<String>, dependencies: List<String>, customRepos: List<MavenRepo>, includeURLs: List<URL>): String {
     requireInPath("idea", "Could not find 'idea' in your PATH. It can be created in IntelliJ under `Tools -> Create Command-line Launcher`")
 
     infoMsg("Setting up idea project from ${scriptFile}")
@@ -209,12 +218,34 @@ fun launchIdeaWithKscriptlet(scriptFile: File, dependencies: List<String>, custo
     //            .run { File(this, "kscript_tmp_project") }
     //            .apply { mkdir() }
 
+    File(tmpProjectDir, ".idea/runConfigurations/")
+        .run {
+            mkdirs()
+        }
+    File(tmpProjectDir, ".idea/runConfigurations/Main.xml").writeText(
+        """
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Main" type="BashConfigurationType" factoryName="Bash">
+    <option name="INTERPRETER_OPTIONS" value="" />
+    <option name="INTERPRETER_PATH" value="kscript" />
+    <option name="PROJECT_INTERPRETER" value="false" />
+    <option name="WORKING_DIRECTORY" value="" />
+    <option name="PARENT_ENVS" value="true" />
+    <option name="SCRIPT_NAME" value="${'$'}PROJECT_DIR${'$'}/src/${scriptFile.name}" />
+    <option name="PARAMETERS" value="${userArgs.joinToString(" ")}" />
+    <module name="" />
+    <method v="2" />
+  </configuration>
+</component>
+        """.trimIndent()
+    )
+
     val stringifiedDeps = dependencies.map { "    compile \"$it\"" }.joinToString("\n")
     val stringifiedRepos = customRepos.map { "    maven {\n        url '${it.url}'\n    }\n" }.joinToString("\n")
 
     val gradleScript = """
 plugins {
-    id "org.jetbrains.kotlin.jvm" version "1.2.41"
+    id "org.jetbrains.kotlin.jvm" version "${KotlinVersion.CURRENT}"
 }
 
 repositories {
@@ -230,6 +261,7 @@ $stringifiedDeps
 }
 
 sourceSets.main.java.srcDirs 'src'
+sourceSets.test.java.srcDirs 'src'
     """.trimIndent()
 
     File(tmpProjectDir, "build.gradle").writeText(gradleScript)
@@ -244,7 +276,7 @@ sourceSets.main.java.srcDirs 'src'
         // also symlink all includes
         includeURLs.distinctBy { it.fileName() }
           .forEach {
-            
+
             val includeFile = when {
                 it.protocol == "file" -> File(it.toURI())
                 else -> fetchFromURL(it.toString())
@@ -254,14 +286,17 @@ sourceSets.main.java.srcDirs 'src'
         }
     }
 
-    return "idea ${tmpProjectDir.absolutePath}"
+    val projectPath = tmpProjectDir.absolutePath
+    infoMsg("Project set up at $projectPath")
+
+    return "idea \"$projectPath\""
 }
 
 private fun URL.fileName() = this.toURI().path.split("/").last()
 
 private fun createSymLink(link: File, target: File) {
     try {
-        Files.createSymbolicLink(link.toPath(), target.absoluteFile.toPath());
+        Files.createSymbolicLink(link.toPath(), target.absoluteFile.toPath())
     } catch (e: IOException) {
         errorMsg("Failed to create symbolic link to script. Copying instead...")
         target.copyTo(link)
@@ -296,8 +331,8 @@ fun packageKscript(scriptJar: File, wrapperClassName: String, dependencies: List
 
     val gradleScript = """
 plugins {
-    id "org.jetbrains.kotlin.jvm" version "1.2.41"
-    id "us.kirchmeier.capsule" version "1.0.2"
+    id "org.jetbrains.kotlin.jvm" version "${KotlinVersion.CURRENT}"
+    id "it.gianluz.capsule" version "1.0.3"
 }
 
 repositories {
@@ -310,34 +345,19 @@ dependencies {
     compile "org.jetbrains.kotlin:kotlin-stdlib"
 $stringifiedDeps
 
-    compile group: 'org.jetbrains.kotlin', name: 'kotlin-script-runtime', version: '1.2.41'
+    compile group: 'org.jetbrains.kotlin', name: 'kotlin-script-runtime', version: '${KotlinVersion.CURRENT}'
 
     // https://stackoverflow.com/questions/20700053/how-to-add-local-jar-file-dependency-to-build-gradle-file
-    compile files('${scriptJar}')
-}
-
-// http://www.capsule.io/user-guide/#really-executable-capsules
-def reallyExecutable(jar) {
-    ant.concat(destfile: "tmp.jar", binary: true) {
-        //zipentry(zipfile: configurations.capsule.singleFile, name: 'capsule/execheader.sh')
-        fileset(dir: '.', includes: 'exec_header.sh')
-
-        fileset(dir: jar.destinationDir) {
-            include(name: jar.archiveName)
-        }
-    }
-    copy {
-        from 'tmp.jar'
-        into jar.destinationDir
-        rename { jar.archiveName }
-    }
-    delete 'tmp.jar'
+    compile files('${scriptJar.invariantSeparatorsPath}')
 }
 
 task simpleCapsule(type: FatCapsule){
   applicationClass '$wrapperClassName'
 
-  baseName '$appName'
+  archiveName '$appName'
+
+  // http://www.capsule.io/user-guide/#really-executable-capsules
+  reallyExecutable
 
   capsuleManifest {
     jvmArgs = [$jvmOptions]
@@ -345,8 +365,6 @@ task simpleCapsule(type: FatCapsule){
     //systemProperties['java.awt.headless'] = true
   }
 }
-
-simpleCapsule.doLast { task -> reallyExecutable(task) }
     """.trimIndent()
 
     val pckgedJar = File(Paths.get("").toAbsolutePath().toFile(), appName).absoluteFile
@@ -360,11 +378,14 @@ exec java -jar ${'$'}0 "${'$'}@"
 
     File(tmpProjectDir, "build.gradle").writeText(gradleScript)
 
-    val pckgResult = evalBash("cd ${tmpProjectDir} && gradle simpleCapsule && cp build/libs/${appName}*.jar ${pckgedJar} && chmod +x ${pckgedJar}")
+    val pckgResult = evalBash("cd '${tmpProjectDir}' && gradle simpleCapsule")
 
     with(pckgResult) {
         kscript.app.errorIf(exitCode != 0) { "packaging of '$appName' failed:\n$pckgResult" }
     }
+
+    pckgedJar.delete()
+    File(tmpProjectDir, "build/libs/${appName}").copyTo(pckgedJar, true).setExecutable(true)
 
     infoMsg("Finished packaging into ${pckgedJar}")
 }

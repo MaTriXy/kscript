@@ -1,3 +1,71 @@
+# Changes
+
+## 2.9
+
+
+Support environment variables in repository credentials ([#248](https://github.com/holgerbrandl/kscript/issues/159))
+* Make INCLUDE directive files relative to script dir
+* Create a default Run Configuration for Idea ([#244](https://github.com/holgerbrandl/kscript/issues/159))
+
+Minor enhancements & fixes:
+* Support whitespace around maven repo credentials (fixes [#228](https://github.com/holgerbrandl/kscript/issues/159))
+* Make INCLUDE directive files relative to script dir
+* Fixed support for gitbash
+* Fixed bootstrap header ([#234](https://github.com/holgerbrandl/kscript/issues/159))
+* Improved and documented basic testing support ([#247](https://github.com/holgerbrandl/kscript/issues/159))
+
+
+## 2.8
+
+Improvements & Fixes
+* [#214](https://github.com/holgerbrandl/kscript/pull/214) Added credentials support for `@file:MavenRepository` annotation (thanks to [@meonlol](https://github.com/meonlol)
+ for providing the PR and his patience)
+
+
+## 2.7
+
+Improvements & Fixes
+* [#159](https://github.com/holgerbrandl/kscript/issues/159) Use aether instead of maven to pull dependencies
+* [#210](https://github.com/holgerbrandl/kscript/issues/210): Updated gradle capsule plugin
+* [#102](https://github.com/holgerbrandl/kscript/issues/102): Removed `--self-update`
+* Use resource from repo for resolve boostrap header
+* [#203](https://github.com/holgerbrandl/kscript/issues/203): Fix cache check bug on Windows
+* [#199](https://github.com/holgerbrandl/kscript/issues/199): Allow to bootstrap kscript installation with `--add-bootstrap-header`
+* [#200](https://github.com/holgerbrandl/kscript/issues/200): Expose script file name to script
+
+
+## v2.6
+
+
+Major Improvements
+
+* [#166](https://github.com/holgerbrandl/kscript/issues/166): Support dynamic versions ending with `+`
+* [#185](https://github.com/holgerbrandl/kscript/issues/185): Support "~" in INCLUDE ()
+* [#187](https://github.com/holgerbrandl/kscript/issues/187): Added support for shortened URLs
+* [#146](https://github.com/holgerbrandl/kscript/issues/146): Allow kscript cache directory to be configurable via `KSCRIPT_CACHE_DIR` environment variable
+* [#175](https://github.com/holgerbrandl/kscript/issues/175): `cygwin` support improvements
+* Improved `kshell` launcher to also launch scripts with invalid code
+
+Notable Bug Fixes
+* Confusing error when filename starts with a number
+* Fixed usage `@file:CompilerOpts` in combination with `@file:Include`
+* Renamed `kshell_from_kscript` to `kshell_kts`
+
+## v2.5
+
+Major Improvements
+
+* Support dependencies with different types (pom instead of jar)
+* Use current kotlin for temporary project when using `--idea`
+* Started [kshell launcher](https://github.com/holgerbrandl/kscript/tree/master/misc/kshell_launcher) for kscriptlets
+* Support `--idea` with includes
+
+Minor Enhancements
+
+* Avoid dependency duplications when using `//INCLUDE` recursively
+* Fixed: Unable to run script with plus character in filename
+* Allow to include same file from multiple files
+* Fixed: Space-containing argument propagation
 
 
 ## v2.4
@@ -121,7 +189,7 @@ Other changes
 
 ## v1.1
 
-* Support for stdin and process substitution as script source. See [examples](examples/unit_tests.sh)
+* Support for stdin and process substitution as script source. See [examples](examples)
 * versioning and auto-update
 * basic command-line help
 * Added support for `KOTLIN_OPTS` (see [#8](https://github.com/holgerbrandl/kscript/issues/8))

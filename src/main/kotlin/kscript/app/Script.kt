@@ -1,7 +1,6 @@
 package kscript.app
 
 import java.io.File
-import java.lang.IllegalArgumentException
 
 /* Immutable script class */
 data class Script(val lines: List<String>, val extension: String = "kts") : Iterable<String> {
@@ -34,7 +33,7 @@ data class Script(val lines: List<String>, val extension: String = "kts") : Iter
         val annotations = emptySet<String>().toMutableSet()
 
         stripShebang().forEach {
-            if (it.startsWith(IMPORT_STATMENT_PREFIX)) {
+            if (it.startsWith(IMPORT_STATEMENT_PREFIX)) {
                 imports.add(it)
             } else if (isKscriptAnnotation(it)) {
                 annotations.add(it)
@@ -71,10 +70,11 @@ data class Script(val lines: List<String>, val extension: String = "kts") : Iter
 }
 
 
-private fun isKscriptAnnotation(line: String) =
-    listOf("DependsOn", "KotlinOpts", "Include", "EntryPoint", "MavenRepository", "DependsOnMaven")
-        .any { line.contains("^@file:${it}[(]".toRegex()) }
+private val KSCRIPT_DIRECTIVE_ANNO: List<Regex> = listOf("DependsOn", "KotlinOpts", "Include", "EntryPoint", "MavenRepository", "DependsOnMaven", "CompilerOpts")
+    .map { "^@file:$it[(]".toRegex() }
 
+private fun isKscriptAnnotation(line: String) =
+    KSCRIPT_DIRECTIVE_ANNO.any { line.contains(it) }
 
 //
 // Entry directive
@@ -96,7 +96,7 @@ private fun extractEntryPoint(line: String) = when {
     line.contains(ENTRY_ANNOT_PREFIX) ->
         line
             .replaceFirst(ENTRY_ANNOT_PREFIX, "")
-            .split(")")[0].trim(' ', '"')
+            .substringBeforeLast(")").trim(' ', '"')
     line.startsWith(ENTRY_COMMENT_PREFIX) ->
         line.split("[ ]+".toRegex()).last()
     else ->
@@ -129,7 +129,7 @@ fun Script.collectDependencies(): List<String> {
 
     // if annotations are used add dependency on kscript-annotations
     if (lines.any { isKscriptAnnotation(it) }) {
-        dependencies += "com.github.holgerbrandl:kscript-annotations:1.2"
+        dependencies += "com.github.holgerbrandl:kscript-annotations:1.4"
     }
 
     return dependencies.distinct()
@@ -157,13 +157,13 @@ internal fun extractDependencies(line: String) = when {
     line.contains(DEPS_ANNOT_PREFIX) -> line
         .replaceFirst(DEPS_ANNOT_PREFIX, "")
         .extractAnnotParams()
-//        .split(")")[0].split(",")
+//        ..substringBeforeLast(")").split(",")
 //        .map { it.trim(' ', '"') }
 
 
     line.contains(DEPSMAVEN_ANNOT_PREFIX) -> line
         .replaceFirst(DEPSMAVEN_ANNOT_PREFIX, "")
-        .split(")")[0].trim(' ', '"').let { listOf(it) }
+        .substringBeforeLast(")").trim(' ', '"').let { listOf(it) }
 
     line.startsWith(DEPS_COMMENT_PREFIX) ->
         line.split("[ ;,]+".toRegex()).drop(1).map(String::trim)
@@ -182,22 +182,32 @@ private fun isDependDeclare(line: String) =
 //
 
 
-data class MavenRepo(val id: String, val url: String)
+data class MavenRepo(val id: String, val url: String, val user: String = "", val password: String = "")
 
 /**
  * Collect custom artifact repos declared with @file:MavenRepository
  */
 fun Script.collectRepos(): List<MavenRepo> {
-    val dependsOnMavenPrefix = "^@file:MavenRepository[(]".toRegex()
+    val mvnRepoAnnotPrefix = "^@file:MavenRepository[(]".toRegex()
     // only supported annotation format for now
 
     // @file:MavenRepository("imagej", "http://maven.imagej.net/content/repositories/releases/")
+    // @file:MavenRepository("imagej", "http://maven.imagej.net/content/repositories/releases/", user="user", password="pass")
     return lines
-        .filter { it.contains(dependsOnMavenPrefix) }
-        .map { it.replaceFirst(dependsOnMavenPrefix, "").split(")")[0] }
-        .map { it.split(",").map { it.trim(' ', '"', '(') }.let { MavenRepo(it[0], it[1]) } }
+        .filter { it.contains(mvnRepoAnnotPrefix) }
+        .map { it.replaceFirst(mvnRepoAnnotPrefix, "").substringBeforeLast(")") }
+        .map { repoLine ->
+            repoLine.split(",").map { it.trim(' ', '"', '(') }.let { annotationParams ->
+                val keyValSep = "[ ]*=[ ]*\"".toRegex()
 
-    // todo add credential support https://stackoverflow.com/questions/36282168/how-to-add-custom-maven-repository-to-gradle
+                val namedArgs = annotationParams
+                        .filter { it.contains(keyValSep) }
+                        .map { keyVal -> keyVal.split(keyValSep).map { it.trim(' ', '\"') }.let{ it.first() to it.last()}}
+                        .toMap()
+
+                MavenRepo(annotationParams[0], annotationParams[1], namedArgs.getOrDefault("user", ""), namedArgs.getOrDefault("password", ""))
+            }
+        }
 }
 
 
