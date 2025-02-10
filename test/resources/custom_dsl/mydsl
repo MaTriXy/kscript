@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
 
-export CUSTOM_KSCRIPT_NAME='mydsl'
-
-export CUSTOM_KSCRIPT_PREAMBLE='
+export KSCRIPT_PREAMBLE='
 // declare dependencies
-@file:DependsOn("de.mpicbg.scicomp:kutils:0.4")
+@file:DependsOn("com.github.holgerbrandl:kutils:0.12")
 
 // make sure to also support includes in here
-// @file:Include("util.kt")
-@file:Include("https://raw.githubusercontent.com/holgerbrandl/kscript/master/test/resources/custom_dsl/test_dsl_include.kt")
+// @file:Import("util.kt")
+@file:Import("https://raw.githubusercontent.com/holgerbrandl/kscript/master/test/resources/custom_dsl/test_dsl_include.kt")
 
 
 // also adjust jvm settings
-@file:KotlinOpts("-J-Xmx5g")
+@file:KotlinOptions("-J-Xmx5g")
 
 
 // define some important variables to be used throughout the dsl

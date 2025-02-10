@@ -1,26 +1,36 @@
-# Base Image for kscript testing
-FROM ubuntu:18.04
+FROM alpine:latest
 
-## update apt cache
-RUN  apt-get update
+MAINTAINER go.kscripting@gmail.com
 
-RUN apt-get install -y curl unzip zip wget git
+ARG KSCRIPT_VERSION=4.1.1
+ARG KOTLIN_VERSION=1.7.21
 
-## install java
-RUN  apt-get install -y default-jdk
+RUN \
+# Install bash & Java \
+apk add bash openjdk11 && \
+\
+# Create temp dir
+cd $(mktemp -d) && \
+\
+# Install kscript \
+    wget https://github.com/holgerbrandl/kscript/releases/download/v${KSCRIPT_VERSION}/kscript-${KSCRIPT_VERSION}-bin.zip -q -O - | \
+    unzip - && \
+    mv kscript-${KSCRIPT_VERSION}/bin/* /usr/local/bin && \
+    chmod a+x /usr/local/bin/kscript && \
+\
+# Install Kotlin
+    wget https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip -q -O - | \
+    unzip - && \
+    chmod a+x kotlinc/bin/kotlin kotlinc/bin/kotlinc && \
+    mv kotlinc /opt && \
+\
+# Done
+    rm -rf $PWD
 
-# Define commonly used JAVA_HOME variable
-#ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64/
-ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64/
+WORKDIR /w
 
+ENTRYPOINT KOTLIN_HOME=/opt/kotlinc \
+    PATH=/opt/kotlinc/bin:$PATH \
+    kscript "$0" "$@"
 
-
-# install sdkman (see http://sdkman.io/install.html)
-RUN bash -c "curl -s 'https://get.sdkman.io' | bash"
-
-# install assert.h
-RUN bash -c "cd /bin && wget https://raw.githubusercontent.com/lehmannro/assert.sh/master/assert.sh && chmod u+x assert.sh"
-
-
-#tall kotlin and maven
-RUN /bin/bash -c 'source ~/.sdkman/bin/sdkman-init.sh && sdkman_auto_answer=true && sdk install kotlin && sdk install maven && sdk install gradle 4.10'
+CMD [ "--help" ]

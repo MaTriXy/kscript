@@ -1,8 +1,8 @@
 echo "fun foo() = 42" > ~/.kscript_home_include.kts
 
 echo '
-//INCLUDE ~/.kscript_home_include.kts
+@file:Import("~/.kscript_home_include.kts")
 println(foo())
-' > home_dir_master.kts
+' > $1/home_dir_master.kts
 
-kscript home_dir_master.kts
+kscript $1/home_dir_master.kts

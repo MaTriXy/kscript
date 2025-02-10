@@ -1,26 +1,72 @@
 ## How to run the unit-tests?
 
-
-We use https://github.com/lehmannro/assert.sh for the tests. To install it just do:
+#### 1. Install sdkman
+SdkMan https://sdkman.io/ is a nice package manager which makes it easy to install software development tools.
 
 
 ```bash
-cd ~/bin
-wget https://raw.githubusercontent.com/lehmannro/assert.sh/master/assert.sh
-chmod u+x assert.sh
+curl -s "https://get.sdkman.io" | bash
 ```
 
+#### 2. Install java, kotlin and gradle
+
+```bash
+sdk install java 11.0.2-open
+sdk install kotlin 1.6.21
+sdk install gradle 7.4.1
+```
+
+#### 3. Clone repository
+Put the cloned repository into $DIR directory.
+
+#### 4. Configure your working environment [optional]
+You can configure your working environment by sourcing setup environment script:
+
+```bash
+cd $DIR
+source linux_environment.sh
+```
+
+Sourcing this script allows to use some useful for development commands:
+```bash
+cdk # bash alias which moves you to your kscript development directory
+switchPath # adds/removes development kscript from $PATH env variable
+help-dev # prints some useful commands 
+```
+
+#### 5. Run integration test suite
+
+```bash
+cdk
+./gradlew clean assemble test
+./gradlew -Dos.type=linux -DincludeTags='posix' integration
+<or> 
+./gradlew -Dos.type=linux -DincludeTags='posix' integration --tests BootstrapHeaderTest 
+```
+
+os.type is usually same as $OSTYPE, except of windows 'cmd' shell.
+
+includeTags can be combined:
+https://junit.org/junit5/docs/current/user-guide/#running-tests-tag-syntax-rules
+usually you would like something like 'posix | linux' (all tests for posix + linux specific tests)
+
+-- tests - comes from Gradle:
+https://docs.gradle.org/current/userguide/java_testing.html#test_filtering
 
 
+#### 6. Check if all tests passed...
 
-To run the tests, just run the [`test_suite.sh`](test_suite.sh)
+---
+Useful commands:
+
 ```bash
 # scp /Users/brandl/projects/kotlin/kscript/kscript bioinfo:/home/brandl/bin/test/kscript/kscript
 
 #git clone https://github.com/holgerbrandl/kscript ; export KSCRIPT_HOME=$(pwd)/kscript
 
 #export KSCRIPT_HOME="/Users/brandl/projects/kotlin/kscript"
-export KSCRIPT_HOME="/mnt/hgfs/sharedDB/db_projects/kscript"
+#export KSCRIPT_HOME="/mnt/hgfs/sharedDB/db_projects/kscript"
+export KSCRIPT_HOME="/mnt/hgfs/d_data/projects/misc/kscript"
 #export KSCRIPT_HOME="/cygdrive/z/kscript"
 ## change into this/test directory
 
@@ -37,11 +83,24 @@ cd ${KSCRIPT_HOME}
 export PATH=${KSCRIPT_HOME}/build/libs:${PATH}
 which kscript
 
+
 ## clean up the environment
-#sdk use kotlin 1.1-RC
 kscript --clear-cache
 
-${KSCRIPT_HOME}/test/test_suite.sh
+# configure java and kotlin
+#export JAVA_HOME=`/usr/libexec/java_home -v 9.0.1`
+java -version
+#sudo update-alternatives --config java
+#update-alternatives -l
+#sudo update-alternatives --set java-1.8.0-openjdk-amd64
+# export JAVA_HOME=$(update-java-alternatives -l | head -n 1 | awk -F ' ' '{print $NF}')
+
+kotlin -version
+sdk list kotlin
+#sdk use kotlin 1.3.72
+#sdk use kotlin 1.4.10
+
+${KSCRIPT_HOME}/test/linux_suite.sh
 
 # # run again with kotlin 1.0.X
 # sdk use kotlin 1.0.6
@@ -55,6 +114,9 @@ export PATH=`echo ${PATH} | awk -v RS=: -v ORS=: '/kscript/ {next} {print}'`
 
 For more examples see https://github.com/lehmannro/assert.sh/blob/master/tests.sh
 
+## Bootstrap Header Testing
+
+See [Test Protocol for Bootstrap Header](../misc/bootstrap_tester/README.md)
 
 ## Tests for dynamic dependencies
 
@@ -123,7 +185,7 @@ curl --request PUT -u admin:password -T $tmpZipDir/tmp.zip http://localhost:8081
 
 ```bash
 echo '
-@file:MavenRepository("my-art", "http://localhost:8081/artifactory/authenticated_repo", user="auth_user", password="password")
+@file:Repository("http://localhost:8081/artifactory/authenticated_repo", user="auth_user", password="password")
 @file:DependsOn("com.jcabi:jcabi-aether:0.10.1") // If unencrypted works via jcenter
 @file:DependsOnMaven("group:somejar:1.0") // If encrypted works.
 println("Hello, World!")
